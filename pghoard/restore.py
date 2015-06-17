@@ -35,6 +35,11 @@ try:
 except ImportError as ex:
     s3_storage = ex
 
+try:
+    from . object_storage import swift as swift_storage
+except ImportError as ex:
+    swift_storage = ex
+
 
 class RestoreError(Exception):
     """Restore error"""
@@ -157,6 +162,21 @@ class Restore(object):
         cmd = self.add_cmd(sub, self.list_basebackups_s3, precondition=s3_storage)
         aws_args()
 
+        def swift_args():
+            cmd.add_argument("--username", help="Swift username [OS_USERNAME]", default=os.environ.get("OS_USERNAME"))
+            cmd.add_argument("--key", help="Swift password/secret key [OS_PASSWORD]", default=os.environ.get("OS_PASSWORD"))
+            cmd.add_argument("--auth-url", help="Swift authentication URL [OS_AUTH_URL]", default=os.environ.get("OS_AUTH_URL"))
+            cmd.add_argument("--container", help="Swift container name", default="pghoard")
+            cmd.add_argument("--tenant-name", help="Swift Tenant name [OS_TENANT_NAME]", default=os.environ.get("OS_TENANT_NAME"))
+            cmd.add_argument("--site", help="pghoard site", default="default")
+
+        cmd = self.add_cmd(sub, self.get_basebackup_swift, precondition=swift_storage)
+        swift_args()
+        target_args()
+
+        cmd = self.add_cmd(sub, self.list_basebackups_swift, precondition=swift_storage)
+        swift_args()
+
         return parser
 
     def get(self, arg):
@@ -231,6 +251,23 @@ class Restore(object):
                                      host=arg.host, port=arg.port, is_secure=(not arg.insecure), pgdata=None)
             self.storage.show_basebackup_list()
         except (Error, s3_storage.boto.exception.BotoServerError) as ex:
+            raise RestoreError("{}: {}".format(ex.__class__.__name__, ex))
+
+    def get_basebackup_swift(self, arg):
+        """Download a basebackup from Swift"""
+        try:
+            self.storage = SwiftRestore(arg.username, arg.key, arg.auth_url, arg.container, arg.tenant_name, site=arg.site,
+                                        pgdata=arg.target_dir)
+            self.get_basebackup(arg.target_dir, arg.basebackup, arg.site, arg.primary_conninfo, overwrite=arg.overwrite)
+        except (Error, RestoreError) as ex:  # XXX: fix exception type
+            raise RestoreError("{}: {}".format(ex.__class__.__name__, ex))
+
+    def list_basebackups_swift(self, arg):
+        """List available basebackups from Swift"""
+        try:
+            self.storage = SwiftRestore(arg.username, arg.key, arg.auth_url, arg.container, arg.tenant_name, site=arg.site)
+            self.storage.show_basebackup_list()
+        except (Error, RestoreError) as ex:  # XXX: fix exception type
             raise RestoreError("{}: {}".format(ex.__class__.__name__, ex))
 
     def get_basebackup(self, pgdata, basebackup, site, primary_conninfo, overwrite=False):
@@ -321,6 +358,12 @@ class GoogleRestore(ObjectStore):
 class S3Restore(ObjectStore):
     def __init__(self, aws_access_key_id, aws_secret_access_key, region, bucket_name, site, host=None, port=None, is_secure=None, pgdata=None):
         storage = s3_storage.S3Transfer(aws_access_key_id, aws_secret_access_key, region, bucket_name, host=host, port=port, is_secure=is_secure)
+        ObjectStore.__init__(self, storage, site, pgdata)
+
+
+class SwiftRestore(ObjectStore):
+    def __init__(self, username, key, authurl, container, tenantname, site="default", pgdata=None):
+        storage = swift_storage.SwiftTransfer(username, key, authurl, tenantname, container)
         ObjectStore.__init__(self, storage, site, pgdata)
 
 

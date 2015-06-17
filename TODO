@@ -1,6 +1,7 @@
 TODO
 ====
 
+* swift download support for large files
 * configurable recovery target recovery.conf (to be created by restore)
 * recovery_command support
 * SSL support for Webserver
